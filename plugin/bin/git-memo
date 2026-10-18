@@ -1,0 +1,6 @@
+#!/bin/sh
+# gitmemo CLI launcher. `git memo ...` resolves this file through PATH.
+# Works with Git for Windows and on Linux, both of which ship /bin/sh.
+set -e
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec pwsh -NoProfile -File "$here/git-memo.ps1" "$@"

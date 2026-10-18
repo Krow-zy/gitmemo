@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        shell: pwsh
+        run: pwsh -NoProfile -File ./tests/run-tests.ps1
+
+      - name: Package the plugin
+        shell: bash
+        run: git archive --format=zip --output=gitmemo-plugin.zip HEAD:plugin
+
+      - name: Create the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v$(jq -r .version plugin/.factory-plugin/plugin.json)"
+          fi
+          echo "releasing $tag"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" gitmemo-plugin.zip --clobber
+          else
+            gh release create "$tag" gitmemo-plugin.zip --title "$tag" --generate-notes
+          fi

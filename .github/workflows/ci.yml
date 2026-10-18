@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+
+      - name: Lint (error severity fails the build)
+        shell: pwsh
+        run: |
+          $findings = @(Invoke-ScriptAnalyzer -Path ./plugin, ./tests -Recurse -Severity Error)
+          if ($findings.Count -gt 0) {
+            $findings | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+            throw "$($findings.Count) error-severity finding(s)"
+          }
+          Write-Output 'PSScriptAnalyzer: 0 error-severity findings'
+
+      - name: Test
+        shell: pwsh
+        run: pwsh -NoProfile -File ./tests/run-tests.ps1

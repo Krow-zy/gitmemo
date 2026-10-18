@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"Add a retry loop to the uploader"}}
+{"type":"assistant","message":{"role":"assistant","content":"Added retries with exponential backoff in upload.ps1"}}
+{"type":"user","message":{"role":"user","content":"The unique marker is GITMEMO_TEST_TOKEN_7f3a"}}
+{"type":"assistant","message":{"role":"assistant","content":"Noted. Validation runs with pwsh -File tests/run-tests.ps1"}}

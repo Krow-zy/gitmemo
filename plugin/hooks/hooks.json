@@ -1,0 +1,24 @@
+{
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "pwsh -NoProfile -File \"${DROID_PLUGIN_ROOT}/hooks/session-start.ps1\"",
+          "timeout": 25
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "pwsh -NoProfile -File \"${DROID_PLUGIN_ROOT}/hooks/session-end.ps1\"",
+          "timeout": 90
+        }
+      ]
+    }
+  ]
+}

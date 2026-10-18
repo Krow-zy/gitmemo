@@ -1,0 +1,17 @@
+{
+  "name": "gitmemo",
+  "description": "Durable project memory across Droid sessions and machines.",
+  "owner": {
+    "name": "Krow-zy"
+  },
+  "plugins": [
+    {
+      "name": "gitmemo",
+      "description": "SessionStart injects a project's distilled notes; SessionEnd captures, redacts and pushes the session transcript into a private git store.",
+      "source": "./plugin",
+      "category": "memory",
+      "homepage": "https://github.com/Krow-zy/gitmemo",
+      "tags": ["memory", "context", "notes", "transcripts", "hooks"]
+    }
+  ]
+}
