@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/Krow-zy/gitmemo/actions/workflows/ci.yml"><img src="https://github.com/Krow-zy/gitmemo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Krow-zy/gitmemo/releases"><img src="https://img.shields.io/github/v/release/Krow-zy/gitmemo" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg" alt="Windows and Linux">
 </p>
@@ -109,7 +110,8 @@ session id, so a session that ends twice is captured once. A failed push keeps t
 locally and is retried on the next capture.
 
 Search, capture and storage are implemented in PowerShell and use only `git` and built-in
-PowerShell cmdlets. `docs/DESIGN.md` covers the data flow, measurements and traps.
+PowerShell cmdlets. [docs/DESIGN.md](docs/DESIGN.md) covers the data flow, measurements
+and traps.
 
 ## Development
 
