@@ -86,10 +86,10 @@ with `.git` growing roughly 0.4 MB per real session.
 Low-disk mode is self-healing. Sparse config lives in `.git/config`, which is not cloned,
 and an existing store may predate sparse mode entirely, so `session-start.ps1` and
 `session-end.ps1` each check `core.sparseCheckout` on every run and call the shared
-`Initialize-StoreSparse` helper when it is missing. `install.ps1` also enables it, but no
-installer step is required: an existing or hand-made store switches on its next hook run.
-`-Full` keeps a complete checkout. A failure to enable sparse mode is logged and the hook
-continues.
+`Initialize-StoreSparse` helper when it is missing. `install.ps1` also calls the helper, but no installer step is required: an existing or
+hand-made store switches on its next hook run. `install.ps1 -Full` skips the install-time
+step only; the next hook run re-applies sparse mode. A failure to enable sparse mode is
+logged and the hook continues.
 
 Searching in sparse mode uses `git grep HEAD`, which reads committed blobs and writes
 nothing. It must never check transcripts back out.

@@ -57,9 +57,9 @@ pwsh -NoProfile -File ./plugin/hooks/install.ps1
 ```
 
 The installer is idempotent, removes old `agent-memory` hook registrations, configures the
-credential helper for the private remote, and enables sparse checkout. `-Full` keeps a
-complete checkout instead. The hooks also enable sparse checkout on every run, so an
-existing store reaches low-disk mode without the installer.
+credential helper for the private remote, and enables sparse checkout. `-Full` skips that
+install-time step, but the hooks re-apply sparse mode on their next run. The hooks own
+low-disk mode, so an existing store reaches it without the installer.
 
 ## Quick start
 
