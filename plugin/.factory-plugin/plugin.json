@@ -1,7 +1,7 @@
 {
   "name": "gitmemo",
   "description": "Durable project memory across Droid sessions and machines: notes injected at session start, transcripts captured at session end.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Krow-zy"
   },

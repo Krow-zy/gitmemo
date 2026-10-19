@@ -5,7 +5,9 @@ Nothing here writes to the repository being worked on; the store is the only tar
 #>
 
 $script:StoreRoot = if ($env:GITMEMO_HOME) { $env:GITMEMO_HOME } else { Join-Path $HOME '.gitmemo' }
-$script:StoreRemote = if ($env:GITMEMO_REMOTE) { $env:GITMEMO_REMOTE } else { 'Krow-zy/gitmemo-store' }
+# No default remote: the store belongs to the user. An unset value is a configuration
+# error the hooks log, not a clone attempt against someone else's private repository.
+$script:StoreRemote = [string]$env:GITMEMO_REMOTE
 
 function Get-StoreRoot { return $script:StoreRoot }
 
@@ -14,7 +16,23 @@ function Get-StoreRemote { return $script:StoreRemote }
 # Low-disk mode keeps the working tree flat: notes, index and manifest are checked out,
 # transcripts stay in the object database and on the remote.
 function Get-SparsePatterns {
-    return @('/README.md', '/hooks/', '/projects/*/notes.md', '/projects/*/index.md', '/projects/*/manifest.jsonl')
+    return @('/README.md', '/.gitattributes', '/hooks/', '/projects/*/notes.md', '/projects/*/index.md', '/projects/*/manifest.jsonl')
+}
+
+# Byte-faithful storage: without this, git normalises line endings on `git add`, so the
+# committed blob would no longer match the manifest's bytes/sha256. `* -text` disables
+# normalisation for the whole store. Never overwrite an existing file.
+function Initialize-StoreAttributes {
+    param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
+    $path = Join-Path $Store '.gitattributes'
+    if (Test-Path -LiteralPath $path) { return $false }
+    try {
+        Set-Content -LiteralPath $path -Value "* -text`n" -NoNewline -Encoding utf8
+        return $true
+    } catch {
+        Write-HookLog $Source "could not write .gitattributes: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Enable-StoreSparse {
@@ -36,6 +54,28 @@ function Initialize-StoreSparse {
     if (-not (Test-Path -LiteralPath (Join-Path $Store '.git'))) { return $false }
     if ((& git -C $Store config --get core.sparseCheckout 2>$null) -eq 'true') { return $true }
     return (Enable-StoreSparse -Store $Store -Source $Source)
+}
+
+# Everything a hook needs before touching the store: byte-faithful attributes and
+# low-disk mode. Safe to call on every run.
+function Initialize-Store {
+    param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
+    if (-not (Test-Path -LiteralPath (Join-Path $Store '.git'))) { return $false }
+    $attributesCreated = Initialize-StoreAttributes -Store $Store -Source $Source
+    # A new .gitattributes needs the current pattern list, which carries it.
+    if ($attributesCreated) { return (Enable-StoreSparse -Store $Store -Source $Source) }
+    if ((& git -C $Store config --get core.sparseCheckout 2>$null) -ne 'true') {
+        return (Enable-StoreSparse -Store $Store -Source $Source)
+    }
+    # Sparse mode can be on with a pattern list from an older release that predates
+    # .gitattributes; re-apply so `sparse-checkout reapply` does not prune it.
+    $file = Join-Path $Store '.git/info/sparse-checkout'
+    $current = if (Test-Path -LiteralPath $file) { @(Get-Content -LiteralPath $file | Where-Object { $_.Trim() }) } else { @() }
+    if (@(Compare-Object -ReferenceObject @(Get-SparsePatterns) -DifferenceObject $current).Count -gt 0) {
+        Write-HookLog $Source 'sparse pattern list is out of date, re-applying'
+        return (Enable-StoreSparse -Store $Store -Source $Source)
+    }
+    return $true
 }
 
 function Write-HookLog {

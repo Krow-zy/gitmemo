@@ -79,6 +79,10 @@ switch ($Command) {
         Write-Output "store:   $store"
         if (Test-Path -LiteralPath (Join-Path $store '.git')) {
             $remote = & git -C $store remote get-url origin 2>$null
+            if (-not $remote) {
+                $remote = if ($env:GITMEMO_REMOTE) { "$($env:GITMEMO_REMOTE) (not cloned yet)" }
+                          else { 'not configured - set GITMEMO_REMOTE or run install.ps1 -Remote <owner/repo>' }
+            }
             $branch = & git -C $store rev-parse --abbrev-ref HEAD 2>$null
             $sparse = ((& git -C $store config --get core.sparseCheckout 2>$null) -eq 'true')
             $pending = @(& git -C $store status --porcelain 2>$null).Count
@@ -87,9 +91,13 @@ switch ($Command) {
             Write-Output "sparse:  $sparse"
             Write-Output "pending: $pending change(s)"
         } else {
-            Write-Output 'store not initialized - run plugin/hooks/install.ps1'
+            $remote = if ($env:GITMEMO_REMOTE) { "$($env:GITMEMO_REMOTE) (not cloned yet)" }
+                      else { 'not configured - set GITMEMO_REMOTE or run install.ps1 -Remote <owner/repo>' }
+            Write-Output "remote:  $remote"
+            Write-Output 'store not initialized - clone the store into GITMEMO_HOME or run plugin/hooks/install.ps1 -Remote <owner/repo>'
         }
         Write-Output ''
+        if (-not (Test-Path -LiteralPath (Join-Path $store '.git'))) { exit 1 }
         & pwsh -NoProfile -File (Join-Path $hookDir 'search.ps1') -List
         exit $LASTEXITCODE
     }

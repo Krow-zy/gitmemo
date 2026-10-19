@@ -37,6 +37,11 @@ if ("$($payload.source)" -eq 'compact') {
 
 $store = Get-StoreRoot
 if (-not (Test-Path -LiteralPath (Join-Path $store '.git'))) {
+    # No default remote: cloning someone else's private repository is never the intent.
+    if (-not $Remote) {
+        Write-HookLog 'session-start' 'no store configured: set GITMEMO_REMOTE or clone into GITMEMO_HOME'
+        exit 0
+    }
     # First run on a machine: fetch the store itself, silently give up if that fails.
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
         Write-HookLog 'session-start' 'store missing and gh not installed'
@@ -55,7 +60,7 @@ if ($LASTEXITCODE -ne 0) { Write-HookLog 'session-start' "pull skipped: $pull" }
 
 # Runs for a fresh clone and for a store that already existed. Failing here only logs;
 # the session still starts.
-[void](Initialize-StoreSparse -Store $store -Source 'session-start')
+[void](Initialize-Store -Store $store -Source 'session-start')
 
 $slug = Get-ProjectSlug -Directory $payload.cwd
 $projectDir = Join-Path $store (Join-Path 'projects' $slug)
@@ -75,7 +80,7 @@ if (Test-Path -LiteralPath $index) {
     $tail = Get-Content -LiteralPath $index | Select-Object -Last 12
     $parts += "## Captured sessions`n`n" + ($tail -join "`n")
 }
-$parts += "Search the full history with: git memo search '<text>'"
+$parts += "Search the full history with: pwsh -NoProfile -File `"$(Join-Path $PSScriptRoot 'search.ps1')`" -Query '<text>'"
 
 Write-Output ('# gitmemo (private)' + "`n`n" + ($parts -join "`n`n"))
 exit 0

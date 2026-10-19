@@ -8,7 +8,9 @@ project's history into a private git repository; a skill and a CLI read it back.
 ```
 session start
   └─ SessionStart hook
-       ├─ clone the store on a first run (gh auth), enforce sparse checkout
+       ├─ with no store and no GITMEMO_REMOTE: log the reason and exit 0
+       ├─ clone the store on a first run (gh auth)
+       ├─ enforce .gitattributes and sparse checkout
        ├─ fast-forward the store (pull --rebase --autostash)
        └─ print projects/<slug>/notes.md + the index tail to stdout
             → Droid appends it to the session context
@@ -19,7 +21,7 @@ during the session
 session end
   └─ SessionEnd hook
        ├─ read the JSON payload from stdin (transcript_path, cwd, session_id)
-       ├─ enforce sparse checkout before anything is written
+       ├─ enforce .gitattributes and sparse checkout before anything is written
        ├─ skip if this session id is already in manifest.jsonl (unless -Force)
        ├─ redact credential-shaped values, copy the transcript
        ├─ append a manifest row, regenerate index.md
@@ -39,7 +41,7 @@ block a session.
 | `plugin/hooks/session-start.ps1` | Clone/pull/print memory |
 | `plugin/hooks/session-end.ps1` | Capture/redact/commit/push |
 | `plugin/hooks/search.ps1` | Search notes and manifests; `-Sessions` for transcripts |
-| `plugin/hooks/install.ps1` | Manual path: hooks registration, legacy retirement, sparse |
+| `plugin/hooks/install.ps1` | Manual path: hooks registration, legacy retirement, attributes, sparse, `-InstallCli` |
 | `plugin/bin/git-memo*` | `git memo search`, `notes`, `status` |
 | `plugin/skills/gitmemo/SKILL.md` | Routing skill for searching and writing memory |
 
@@ -58,11 +60,39 @@ the folder name is used.
                              /index.md         regenerated from the manifest
                              /sessions/<yyyy-MM-dd-HHmmss>-<sid8>.jsonl
 <GITMEMO_HOME>/hooks/hook.log                  best-effort diagnostics
+<GITMEMO_HOME>/.gitattributes                  `* -text`
 ```
 
 A manifest row carries `captured`, `session`, `file`, `bytes`, `messages`, `sha256`,
 `redactions`, `project` and `cwd`. `index.md` is derived from the manifest and is never
 hand-edited.
+
+## Store remote
+
+There is no default remote. `GITMEMO_REMOTE` starts unset, so a fresh machine cannot clone
+a repository it does not own by accident. With no store at `GITMEMO_HOME` and no
+`GITMEMO_REMOTE`, `session-start.ps1` prints nothing, logs
+`no store configured: set GITMEMO_REMOTE or clone into GITMEMO_HOME` to `hook.log`, and
+exits 0; `session-end.ps1` does the same before it writes anything. `git memo status` and
+`install.ps1` print the same instruction. The remote is only used for the initial clone:
+afterwards `origin` in the store clone is authoritative.
+
+## Byte-faithful storage
+
+The committed transcript must be the transcript. A manifest row promises `bytes` and
+`sha256` for the stored file, and SessionEnd computes both from the bytes it wrote, so any
+later normalisation silently invalidates every row.
+
+Two things keep that promise:
+
+- `<GITMEMO_HOME>/.gitattributes` sets `* -text`. Without it, `core.autocrlf` rewrites CRLF
+  transcripts on commit and the blob no longer matches its row.
+- The pattern list covers `/.gitattributes`, so the file survives `sparse-checkout reapply`
+  instead of being pruned and re-created differently on the next machine.
+
+`Initialize-StoreAttributes` writes the file once and never overwrites an existing one, so
+a store that deliberately sets its own attributes keeps them. Test 11 captures a CRLF
+transcript and compares the committed blob's size and sha256 with the manifest row.
 
 ## Low-disk (sparse) mode
 
@@ -85,11 +115,15 @@ with `.git` growing roughly 0.4 MB per real session.
 
 Low-disk mode is self-healing. Sparse config lives in `.git/config`, which is not cloned,
 and an existing store may predate sparse mode entirely, so `session-start.ps1` and
-`session-end.ps1` each check `core.sparseCheckout` on every run and call the shared
-`Initialize-StoreSparse` helper when it is missing. `install.ps1` also calls the helper, but no installer step is required: an existing or
-hand-made store switches on its next hook run. `install.ps1 -Full` skips the install-time
-step only; the next hook run re-applies sparse mode. A failure to enable sparse mode is
-logged and the hook continues.
+`session-end.ps1` each call the shared `Initialize-Store` helper on every run; it enables
+sparse mode when `core.sparseCheckout` is missing and re-applies it when the pattern list is
+stale. That helper also writes the store's
+`.gitattributes`, so both the attributes and sparse mode arrive together. The pattern set
+is `/README.md`, `/.gitattributes`, `/hooks/`, `/projects/*/notes.md`,
+`/projects/*/index.md`, `/projects/*/manifest.jsonl`. `install.ps1` calls the same helper,
+but no installer step is required: an existing or hand-made store switches on its next hook
+run. `install.ps1 -Full` skips the install-time sparse step only; the next hook run
+re-applies sparse mode. A failure to enable sparse mode is logged and the hook continues.
 
 Searching in sparse mode uses `git grep HEAD`, which reads committed blobs and writes
 nothing. It must never check transcripts back out.
@@ -115,8 +149,14 @@ recaptures and appends a second row.
 
 | Path | What it does |
 |---|---|
-| Plugin install | Hooks come from `plugin/hooks/hooks.json`; the marketplace handles updates |
-| `install.ps1` | Manual registration in `~/.factory/hooks.json`, legacy `agent-memory` hooks removed, credential helper configured |
+| Plugin install | Hooks come from `plugin/hooks/hooks.json`; the marketplace handles updates. It adds nothing to `PATH`. |
+| `install.ps1` | Manual registration in `~/.factory/hooks.json`, legacy `agent-memory` hooks removed, credential helper configured, store `.gitattributes` written |
+| `install.ps1 -InstallCli` | Writes a `git-memo` sh launcher into the first per-user `PATH` directory, else `~/.local/bin`, and prints the path |
+| `plugin/bin` on `PATH` | Makes `git memo` work in any shell; git resolves the extensionless `git-memo` launcher on Windows and Linux |
+
+Droid expands `${DROID_PLUGIN_ROOT}` in a plugin's `SKILL.md`, so the skill can call
+`${DROID_PLUGIN_ROOT}/hooks/search.ps1` without any `PATH` setup. That is the documented
+primary path, and the reason `git memo` is described as the short form.
 
 `install.ps1` is idempotent. It computes the new configuration, compares it with the file,
 and only writes when something changed. The first real change backs the original up to
@@ -147,6 +187,11 @@ These cost time, in rough order:
 - Sparse configuration is not cloned, so every fresh clone has to opt back in.
 - Hooks live in `~/.factory/hooks.json` and `settings.json`; both are merged. A legacy
   registration next to the plugin one captures every session twice.
+- `git memo --help` never reaches the launcher: git intercepts it as a man page lookup and
+  fails with `documentation file not found`. `git memo help` does.
+- A plugin install adds nothing to `PATH`, and git does not resolve a `.cmd`-only shim on
+  Windows. The shim has to be the extensionless `#!/bin/sh` launcher, or a wrapper that
+  forwards to `git-memo.ps1`.
 
 ## Open items
 
@@ -162,7 +207,7 @@ These cost time, in rough order:
 
 ## Tests
 
-`tests/run-tests.ps1` runs ten checks without Pester, Pester modules or the network, all
+`tests/run-tests.ps1` runs twelve checks without Pester, Pester modules or the network, all
 against temporary stores:
 
 1. Every `.ps1` parses.
@@ -176,3 +221,8 @@ against temporary stores:
 9. No credential-shaped value survives in the store, the log or the committed tree.
 10. An existing store with no installer run turns sparse mode on during capture: the
     transcript is committed, and the sessions directory never appears in the working tree.
+11. Byte-faithful storage: a CRLF transcript commits unchanged, the committed blob's size
+    and sha256 match the manifest row, and `.gitattributes` with `* -text` is committed and
+    inside the sparse pattern set.
+12. `install.ps1 -InstallCli` writes a shim that `git memo` resolves, and a missing store
+    with no `GITMEMO_REMOTE` leaves SessionStart silent but logged.

@@ -100,6 +100,22 @@ function Get-ManifestRows {
     return @([System.IO.File]::ReadLines($manifest) | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
 }
 
+# Byte-exact blob contents. `git cat-file` output is captured as a raw stream so CRLF
+# bytes survive; PowerShell text pipelines would rewrite them.
+function Get-GitBlobBytes {
+    param([string]$Store, [string]$Rev)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new('git')
+    foreach ($arg in @('-C', $Store, 'cat-file', 'blob', $Rev)) { $psi.ArgumentList.Add($arg) }
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $process = [System.Diagnostics.Process]::Start($psi)
+    $buffer = [System.IO.MemoryStream]::new()
+    $process.StandardOutput.BaseStream.CopyTo($buffer)
+    [void]$process.WaitForExit()
+    return $buffer.ToArray()
+}
+
 $transcriptPlain = Join-Path $fixtures 'session-plain.jsonl'
 
 # --- 1 -----------------------------------------------------------------------
@@ -428,6 +444,103 @@ Test-Case '10 sparse self-heals on an existing store' {
 
     $sessionsDir = Join-Path $store 'projects/project-10/sessions'
     Assert-True (-not (Test-Path -LiteralPath $sessionsDir)) "sessions directory materialized at $sessionsDir"
+
+    # A store written by 0.1.0 can have sparse mode on with a pattern list that predates
+    # .gitattributes, which also prunes the file itself. The next capture has to extend the
+    # list and rewrite the file, or a later `sparse-checkout reapply` prunes it for good.
+    Set-SparsePatterns $store
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $store '.gitattributes'))) 'old pattern list did not prune .gitattributes'
+
+    $again = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcriptPlain, '-SessionId', 'session-ten-b', '-NoPush')
+    Assert-True ($again.ExitCode -eq 0) "second capture exit $($again.ExitCode): $($again.Output)"
+    Assert-True (Test-Path -LiteralPath (Join-Path $store '.gitattributes')) '.gitattributes was not rewritten'
+    $patterns = Get-Content -LiteralPath (Join-Path $store '.git/info/sparse-checkout') -Raw
+    Assert-True ($patterns.Contains('/.gitattributes')) 'the old sparse pattern list was not extended'
+}
+
+# --- 11 ----------------------------------------------------------------------
+Test-Case '11 store is byte-faithful for CRLF transcripts' {
+    $store = Join-Path $tempRoot 'store-11'
+    New-TestStore $store
+    $project = Join-Path $tempRoot 'project-11'
+    New-TestProject -Path $project
+
+    $body = '{"type":"user","message":{"role":"user","content":"crlf line one"}}' + "`r`n" +
+            '{"type":"assistant","message":{"role":"assistant","content":"crlf line two"}}' + "`r`n"
+    $transcript = Join-Path $tempRoot 'session-crlf.jsonl'
+    [System.IO.File]::WriteAllText($transcript, $body, [System.Text.UTF8Encoding]::new($false))
+    Assert-True ($body.Contains("`r`n")) 'test fixture is not CRLF'
+
+    $run = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcript, '-SessionId', 'session-eleven', '-NoPush')
+    Assert-True ($run.ExitCode -eq 0) "capture exit $($run.ExitCode): $($run.Output)"
+
+    $projectDir = Join-Path $store (Join-Path 'projects' 'project-11')
+    $row = @(Get-ManifestRows $projectDir)[0]
+    $attributes = Join-Path $store '.gitattributes'
+    Assert-True (Test-Path -LiteralPath $attributes) '.gitattributes was not created'
+    Assert-True ((Get-Content -LiteralPath $attributes -Raw).Contains('* -text')) '.gitattributes does not disable text normalisation'
+    Assert-True (@(& git -C $store ls-tree -r --name-only HEAD -- '.gitattributes').Count -eq 1) '.gitattributes is not committed'
+
+    $rev = "HEAD:projects/project-11/$($row.file)"
+    $bytes = Get-GitBlobBytes -Store $store -Rev $rev
+    Assert-True ($bytes.Length -eq $row.bytes) "committed blob is $($bytes.Length) bytes, manifest says $($row.bytes)"
+    $sha = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    Assert-True ($sha -eq $row.sha256) "committed sha256 is $sha, manifest says $($row.sha256)"
+    Assert-True ($bytes.Length -eq (Get-Item -LiteralPath $transcript).Length) 'CRLF transcript was normalised in the commit'
+
+    $patterns = Get-Content -LiteralPath (Join-Path $store '.git/info/sparse-checkout') -Raw
+    Assert-True ($patterns.Contains('/.gitattributes')) '.gitattributes is outside the sparse pattern set'
+}
+
+# --- 12 ----------------------------------------------------------------------
+Test-Case '12 install -InstallCli writes a working shim' {
+    $store = Join-Path $tempRoot 'store-12'
+    New-TestStore $store
+    $hooksDir = Join-Path $tempRoot 'factory-12'
+    $cliDir = Join-Path $tempRoot 'cli-12'
+    New-Item -ItemType Directory -Force -Path $hooksDir, $cliDir | Out-Null
+
+    $run = Invoke-Script -Script (Join-Path $hooks 'install.ps1') -Store $store `
+        -Arguments @('-StoreRoot', $store, '-HooksFile', (Join-Path $hooksDir 'hooks.json'),
+            '-NoClone', '-SkipCredentials', '-InstallCli', '-CliDir', $cliDir)
+    Assert-True ($run.ExitCode -eq 0) "install exit $($run.ExitCode): $($run.Output)"
+
+    $shim = Join-Path $cliDir 'git-memo'
+    Assert-True (Test-Path -LiteralPath $shim) "shim missing at $shim"
+    Assert-True ((Get-Content -LiteralPath $shim -Raw) -match 'git-memo\.ps1') 'shim does not point at the CLI script'
+
+    $oldPath = $env:PATH
+    $oldHome = $env:GITMEMO_HOME
+    $env:PATH = "$cliDir$([System.IO.Path]::PathSeparator)$env:PATH"
+    $env:GITMEMO_HOME = $store
+    try {
+        $out = & git memo 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "git memo exit $LASTEXITCODE"
+        Assert-True ((@($out) -join "`n") -match 'git memo - search and inspect') 'the shim did not run the CLI'
+
+        $status = & git memo status 2>&1
+        Assert-True ((@($status) -join "`n") -match 'GITMEMO_REMOTE') 'status does not say how to configure a store remote'
+    } finally {
+        $env:PATH = $oldPath
+        $env:GITMEMO_HOME = $oldHome
+    }
+
+    # No default remote: a machine with no store and no GITMEMO_REMOTE must stay silent
+    # and leave a hint in the log instead of cloning somebody else's repository.
+    $missing = Join-Path $tempRoot 'store-12-missing'
+    $previousRemote = $env:GITMEMO_REMOTE
+    $env:GITMEMO_REMOTE = ''
+    try {
+        $cold = Invoke-Script -Script (Join-Path $hooks 'session-start.ps1') -Store $missing `
+            -Stdin (@{ cwd = $tempRoot; source = 'startup'; session_id = 's12' } | ConvertTo-Json -Compress)
+    } finally { $env:GITMEMO_REMOTE = $previousRemote }
+    Assert-True ($cold.ExitCode -eq 0) "no-remote start exit $($cold.ExitCode)"
+    Assert-True ($cold.Output.Trim() -eq '') "no-remote start printed: $($cold.Output)"
+    $log = Join-Path $missing 'hooks/hook.log'
+    Assert-True (Test-Path -LiteralPath $log) 'no-remote start wrote no log'
+    Assert-True ((Get-Content -LiteralPath $log -Raw) -match 'no store configured') 'no-remote start was not explained in the log'
 }
 
 # --- summary -----------------------------------------------------------------
