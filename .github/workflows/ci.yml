@@ -27,7 +27,10 @@ jobs:
       - name: Lint (error severity fails the build)
         shell: pwsh
         run: |
-          $findings = @(Invoke-ScriptAnalyzer -Path ./plugin, ./tests -Recurse -Severity Error)
+          # -Path takes one string, not an array.
+          $findings = @('./plugin', './tests' | ForEach-Object {
+            Invoke-ScriptAnalyzer -Path $_ -Recurse -Severity Error
+          })
           if ($findings.Count -gt 0) {
             $findings | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
             throw "$($findings.Count) error-severity finding(s)"
