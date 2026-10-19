@@ -58,7 +58,8 @@ pwsh -NoProfile -File ./plugin/hooks/install.ps1
 
 The installer is idempotent, removes old `agent-memory` hook registrations, configures the
 credential helper for the private remote, and enables sparse checkout. `-Full` keeps a
-complete checkout instead.
+complete checkout instead. The hooks also enable sparse checkout on every run, so an
+existing store reaches low-disk mode without the installer.
 
 ## Quick start
 
@@ -95,6 +96,10 @@ scripts directly: `pwsh -NoProfile -File plugin/hooks/search.ps1 -Query "text"`.
 Set the environment variables in the shell that launches Droid. The store remote is read
 at clone time; after that, `origin` in the store clone is authoritative.
 
+Sparse mode is enforced by the hooks on every run: `SessionStart` and `SessionEnd` check
+`core.sparseCheckout` and re-apply the patterns when they are missing, so an existing
+store switches to low-disk mode without an installer step.
+
 ## How it works
 
 | What you see | Where it comes from |
@@ -120,7 +125,7 @@ git clone https://github.com/Krow-zy/gitmemo
 pwsh -NoProfile -File ./tests/run-tests.ps1
 ```
 
-Nine tests run against temporary stores with no network and no real user data. CI runs
+Ten tests run against temporary stores with no network and no real user data. CI runs
 the same suite plus PSScriptAnalyzer (error severity fails) on `windows-latest` and
 `ubuntu-latest`. The skill that teaches an agent to search and maintain the store is at
 `plugin/skills/gitmemo/SKILL.md`.

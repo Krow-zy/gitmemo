@@ -47,13 +47,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $store '.git'))) {
         Write-HookLog 'session-start' "auto-clone failed: $clone"
         exit 0
     }
-    # Sparse checkout is repo-local config, so a fresh clone must opt back in.
-    [void](Enable-StoreSparse -Store $store -Source 'session-start')
     Write-HookLog 'session-start' "store cloned to $store"
 }
 
 $pull = & git -C $store -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=10 pull --rebase --autostash -q 2>&1
 if ($LASTEXITCODE -ne 0) { Write-HookLog 'session-start' "pull skipped: $pull" }
+
+# Runs for a fresh clone and for a store that already existed. Failing here only logs;
+# the session still starts.
+[void](Initialize-StoreSparse -Store $store -Source 'session-start')
 
 $slug = Get-ProjectSlug -Directory $payload.cwd
 $projectDir = Join-Path $store (Join-Path 'projects' $slug)

@@ -39,6 +39,10 @@ if (-not $payload) { exit 0 }
 $store = Get-StoreRoot
 if (-not (Test-Path -LiteralPath (Join-Path $store '.git'))) { Stop-Capture "store not found at $store" }
 
+# Self-healing low-disk mode: an existing store must not keep transcripts in the
+# working tree just because install.ps1 never ran on this machine.
+[void](Initialize-StoreSparse -Store $store -Source 'session-end')
+
 $transcript = $payload.transcript_path
 if (-not $transcript -or -not (Test-Path -LiteralPath $transcript)) { Stop-Capture "no transcript to capture at '$transcript'" }
 

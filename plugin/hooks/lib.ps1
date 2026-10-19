@@ -28,6 +28,16 @@ function Enable-StoreSparse {
     return $true
 }
 
+# Low-disk mode is enforced by the hooks, not by the installer. Sparse config is
+# repo-local and is not cloned, and a store may predate sparse mode entirely, so every
+# hook run checks it and re-applies the patterns when they are missing.
+function Initialize-StoreSparse {
+    param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
+    if (-not (Test-Path -LiteralPath (Join-Path $Store '.git'))) { return $false }
+    if ((& git -C $Store config --get core.sparseCheckout 2>$null) -eq 'true') { return $true }
+    return (Enable-StoreSparse -Store $Store -Source $Source)
+}
+
 function Write-HookLog {
     param([string]$Source, [string]$Message)
     try {

@@ -163,15 +163,21 @@ Test-Case '3 capture round-trip' {
     $row = $rows[0]
     Assert-True ($row.session -eq 'session-three') "session id is '$($row.session)'"
     Assert-True ($row.file -like 'sessions/*.jsonl') "file is '$($row.file)'"
-    $stored = Join-Path $projectDir $row.file
-    Assert-True (Test-Path -LiteralPath $stored) "stored transcript missing at $stored"
+    # Sparse mode is on for every store now, so the working-tree copy is pruned after the
+    # commit; the transcript still has to exist in HEAD.
+    $blob = 'HEAD:projects/my-app/' + $row.file
+    & git -C $store cat-file -e $blob 2>$null
+    Assert-True ($LASTEXITCODE -eq 0) "stored transcript missing at $blob"
 
     $expectedBytes = (Get-Item -LiteralPath $transcriptPlain).Length
     Assert-True ($row.bytes -eq $expectedBytes) "bytes $($row.bytes), expected $expectedBytes"
+    $committedBytes = [int](& git -C $store cat-file -s $blob 2>$null)
+    Assert-True ($committedBytes -eq $expectedBytes) "committed blob is $committedBytes bytes, expected $expectedBytes"
     $expectedMessages = @([System.IO.File]::ReadLines($transcriptPlain)).Count
     Assert-True ($row.messages -eq $expectedMessages) "messages $($row.messages), expected $expectedMessages"
-    $sha = (Get-FileHash -LiteralPath $stored -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-True ($row.sha256 -eq $sha) "sha256 mismatch"
+    # No redaction happened, so the stored copy is byte-identical to the fixture.
+    $sha = (Get-FileHash -LiteralPath $transcriptPlain -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-True ($row.sha256 -eq $sha) 'sha256 mismatch'
     Assert-True ($row.redactions -eq 0) "redactions $($row.redactions), expected 0"
 
     $index = Get-Content -LiteralPath (Join-Path $projectDir 'index.md') -Raw
@@ -373,12 +379,14 @@ Test-Case '9 no secret leakage' {
     $projectDir = Join-Path $store (Join-Path 'projects' 'project-9')
     $row = @(Get-ManifestRows $projectDir)[0]
     Assert-True ($row.redactions -ge 3) "manifest redactions is $($row.redactions), expected at least 3"
-    $stored = Join-Path $projectDir $row.file
-    $storedText = Get-Content -LiteralPath $stored -Raw
+    # Sparse mode prunes the working-tree copy, so read the committed blob.
+    $storedText = (@(& git -C $store show "HEAD:projects/project-9/$($row.file)" 2>$null) -join "`n")
     Assert-True ($storedText.Contains('[REDACTED]')) 'stored transcript has no redaction marker'
     Assert-True (-not $storedText.Contains($openai)) 'stored transcript contains the OpenAI-shaped value'
     Assert-True (-not $storedText.Contains($github)) 'stored transcript contains the GitHub-shaped value'
     Assert-True (-not $storedText.Contains($aws)) 'stored transcript contains the AWS-shaped value'
+    & git -C $store grep -F -I -q -e '[REDACTED]' HEAD 2>$null
+    Assert-True ($LASTEXITCODE -eq 0) 'the committed transcript has no redaction marker'
 
     $env:GITMEMO_HOME = $store
     . (Join-Path $hooks 'lib.ps1')
@@ -393,6 +401,33 @@ Test-Case '9 no secret leakage' {
         & git -C $store grep -F -I -q -e $secret HEAD 2>$null
         Assert-True ($LASTEXITCODE -ne 0) 'a credential survived in the committed tree'
     }
+}
+
+# --- 10 ----------------------------------------------------------------------
+Test-Case '10 sparse self-heals on an existing store' {
+    $store = Join-Path $tempRoot 'store-10'
+    New-TestStore $store
+    $initial = & git -C $store config --get core.sparseCheckout 2>$null
+    Assert-True ($initial -ne 'true') "test store was already sparse ('$initial')"
+
+    $project = Join-Path $tempRoot 'project-10'
+    New-TestProject -Path $project
+
+    # No install.ps1 and no successful SessionStart on this store: the capture hook
+    # itself has to switch low-disk mode on before it writes.
+    $run = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcriptPlain, '-SessionId', 'session-ten', '-NoPush')
+    Assert-True ($run.ExitCode -eq 0) "capture exit $($run.ExitCode): $($run.Output)"
+
+    $sparse = & git -C $store config --get core.sparseCheckout 2>$null
+    Assert-True ($sparse -eq 'true') "core.sparseCheckout is '$sparse', expected 'true'"
+
+    $tracked = @(& git -C $store ls-tree -r --name-only HEAD -- 'projects/project-10/sessions')
+    Assert-True ($tracked.Count -eq 1) "git ls-tree found $($tracked.Count) transcript(s)"
+    Assert-True ($tracked[0] -like 'projects/project-10/sessions/*.jsonl') "unexpected tracked path '$($tracked[0])'"
+
+    $sessionsDir = Join-Path $store 'projects/project-10/sessions'
+    Assert-True (-not (Test-Path -LiteralPath $sessionsDir)) "sessions directory materialized at $sessionsDir"
 }
 
 # --- summary -----------------------------------------------------------------

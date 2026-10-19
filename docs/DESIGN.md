@@ -8,7 +8,7 @@ project's history into a private git repository; a skill and a CLI read it back.
 ```
 session start
   └─ SessionStart hook
-       ├─ clone the store on a first run (gh auth), enable sparse checkout
+       ├─ clone the store on a first run (gh auth), enforce sparse checkout
        ├─ fast-forward the store (pull --rebase --autostash)
        └─ print projects/<slug>/notes.md + the index tail to stdout
             → Droid appends it to the session context
@@ -19,6 +19,7 @@ during the session
 session end
   └─ SessionEnd hook
        ├─ read the JSON payload from stdin (transcript_path, cwd, session_id)
+       ├─ enforce sparse checkout before anything is written
        ├─ skip if this session id is already in manifest.jsonl (unless -Force)
        ├─ redact credential-shaped values, copy the transcript
        ├─ append a manifest row, regenerate index.md
@@ -82,9 +83,13 @@ That is about 11.6x smaller on disk than the raw transcripts, and the working tr
 not grow with the number of sessions. The prototype store measured 34 KB of working tree
 with `.git` growing roughly 0.4 MB per real session.
 
-Sparse config itself lives in `.git/config`, which is not cloned, so both
-`session-start.ps1` (right after an auto-clone) and `install.ps1` re-apply the patterns.
-`-Full` keeps a complete checkout.
+Low-disk mode is self-healing. Sparse config lives in `.git/config`, which is not cloned,
+and an existing store may predate sparse mode entirely, so `session-start.ps1` and
+`session-end.ps1` each check `core.sparseCheckout` on every run and call the shared
+`Initialize-StoreSparse` helper when it is missing. `install.ps1` also enables it, but no
+installer step is required: an existing or hand-made store switches on its next hook run.
+`-Full` keeps a complete checkout. A failure to enable sparse mode is logged and the hook
+continues.
 
 Searching in sparse mode uses `git grep HEAD`, which reads committed blobs and writes
 nothing. It must never check transcripts back out.
@@ -157,7 +162,7 @@ These cost time, in rough order:
 
 ## Tests
 
-`tests/run-tests.ps1` runs nine checks without Pester, Pester modules or the network, all
+`tests/run-tests.ps1` runs ten checks without Pester, Pester modules or the network, all
 against temporary stores:
 
 1. Every `.ps1` parses.
@@ -169,3 +174,5 @@ against temporary stores:
 7. SessionStart matrix: startup, compact, unknown repo, invalid JSON.
 8. Install idempotency, legacy removal, one backup, none for a no-op or a fresh file.
 9. No credential-shaped value survives in the store, the log or the committed tree.
+10. An existing store with no installer run turns sparse mode on during capture: the
+    transcript is committed, and the sessions directory never appears in the working tree.
