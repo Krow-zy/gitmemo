@@ -606,6 +606,36 @@ Test-Case '14 the hook log stays out of the store history' {
     Assert-True ($patterns.Contains('/.gitattributes')) 'the sparse pattern list does not carry .gitattributes'
 }
 
+# --- 15 ----------------------------------------------------------------------
+Test-Case '15 a tracked .gitignore is never overwritten' {
+    $store = Join-Path $tempRoot 'store-15'
+    New-TestStore $store
+    $custom = "# rules the store owner wrote`ncustom.tmp`nhooks/hook.log`n"
+    Set-Content -LiteralPath (Join-Path $store '.gitignore') -Value $custom -NoNewline -Encoding utf8
+    & git -C $store add -A 2>&1 | Out-Null
+    & git -C $store commit -q -m 'ignore' 2>&1 | Out-Null
+
+    # Sparse mode from an older release prunes the file, so it is tracked but absent from
+    # the working tree. That absence must not look like "no ignore file yet".
+    Set-SparsePatterns $store
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $store '.gitignore'))) 'the old pattern list did not prune .gitignore'
+
+    $project = Join-Path $tempRoot 'project-15'
+    New-TestProject -Path $project
+    $run = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcriptPlain, '-SessionId', 'session-fifteen', '-NoPush')
+    Assert-True ($run.ExitCode -eq 0) "capture exit $($run.ExitCode): $($run.Output)"
+
+    $path = Join-Path $store '.gitignore'
+    Assert-True (Test-Path -LiteralPath $path) '.gitignore was not restored by the sparse re-apply'
+    $content = Get-Content -LiteralPath $path -Raw
+    Assert-True ($content -match 'custom\.tmp') "the store's own rules were replaced: $content"
+    $committed = @(& git -C $store show 'HEAD:.gitignore') -join "`n"
+    Assert-True ($committed -match 'custom\.tmp') 'the commit dropped the custom rules'
+    $status = @(& git -C $store status --porcelain --untracked-files=no)
+    Assert-True ($status.Count -eq 0) ('tracked files are dirty: ' + ($status -join ' | '))
+}
+
 # --- summary -----------------------------------------------------------------
 Write-Output ''
 Write-Output ('{0} passed, {1} failed' -f $script:passes, $script:failures)

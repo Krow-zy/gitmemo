@@ -202,6 +202,9 @@ These cost time, in rough order:
 - `-Sessions` used to replace the search scope in sparse mode, so a query answered in
   `notes.md` came back empty whenever the caller also asked for transcripts. It adds the
   transcript hits now; the scope bug is covered by a test.
+- "The file is missing" is not the same as "the file was never written": sparse checkout
+  prunes a tracked file whose path left the pattern list. A hook that creates its `.gitignore`
+  on absence overwrites the store owner's rules. Ask git (`cat-file -e HEAD:<path>`) first.
 
 ## Open items
 
@@ -217,7 +220,7 @@ These cost time, in rough order:
 
 ## Tests
 
-`tests/run-tests.ps1` runs fourteen checks without Pester, Pester modules or the network,
+`tests/run-tests.ps1` runs fifteen checks without Pester, Pester modules or the network,
 all against temporary stores:
 
 1. Every `.ps1` parses.
@@ -242,3 +245,6 @@ all against temporary stores:
     is untracked, the local file survives and the pattern list carries both dotfiles.
 
 Both 13 and 14 fail when the fix is reverted, which is how they were checked.
+15. A store with its own tracked `.gitignore`, pruned from the working tree by an old pattern
+    list, keeps its rules: the hook restores the file instead of replacing it. Reverting the
+    `cat-file -e` guard makes this test fail.

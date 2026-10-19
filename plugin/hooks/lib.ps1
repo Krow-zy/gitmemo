@@ -40,15 +40,28 @@ function Initialize-StoreAttributes {
 function Initialize-StoreIgnore {
     param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
     $path = Join-Path $Store '.gitignore'
-    if (Test-Path -LiteralPath $path) { return $false }
-    try {
-        Set-Content -LiteralPath $path -Value "hooks/hook.log`n" -NoNewline -Encoding utf8
-    } catch {
-        Write-HookLog $Source "could not write .gitignore: $($_.Exception.Message)"
-        return $false
+    $created = $false
+    if (-not (Test-Path -LiteralPath $path)) {
+        # Absent is not the same as never written: sparse checkout prunes a tracked file
+        # outside the pattern list. Rewriting it would destroy rules the store owner wrote,
+        # so only a file git has never seen is created here.
+        & git -C $Store cat-file -e 'HEAD:.gitignore' 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            try {
+                Set-Content -LiteralPath $path -Value "hooks/hook.log`n" -NoNewline -Encoding utf8
+                $created = $true
+            } catch {
+                Write-HookLog $Source "could not write .gitignore: $($_.Exception.Message)"
+                return $false
+            }
+        }
     }
-    & git -C $Store rm --cached --ignore-unmatch -q 'hooks/hook.log' 2>&1 | Out-Null
-    return $true
+    # Only when the ignore file on disk actually covers the log; a store with its own
+    # .gitignore that leaves the log tracked keeps it tracked.
+    if ((Test-Path -LiteralPath $path) -and ((Get-Content -LiteralPath $path -Raw) -match 'hooks/hook\.log')) {
+        & git -C $Store rm --cached --ignore-unmatch -q 'hooks/hook.log' 2>&1 | Out-Null
+    }
+    return $created
 }
 
 function Enable-StoreSparse {

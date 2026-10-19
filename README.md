@@ -204,7 +204,7 @@ store switches to low-disk mode without an installer step.
 | `projects/<slug>/index.md` | Regenerated from the manifest by `session-end.ps1` |
 | `projects/<slug>/sessions/*.jsonl` | Redacted transcript, stored in git |
 | `.gitattributes` in the store | `* -text`, written on store init so a transcript commits byte-for-byte |
-| `.gitignore` in the store | `hooks/hook.log`, so local diagnostics never enter a capture |
+| `.gitignore` in the store | `hooks/hook.log`, created only when the store has no ignore file of its own |
 | `hooks/hook.log` | Every skipped or failed hook path, with the reason |
 
 The slug is the repository name from `git remote get-url origin`, lowercased. Dedup is by
@@ -238,7 +238,7 @@ git clone https://github.com/Krow-zy/gitmemo
 pwsh -NoProfile -File ./tests/run-tests.ps1
 ```
 
-Fourteen tests run against temporary stores with no network and no real user data. CI runs
+Fifteen tests run against temporary stores with no network and no real user data. CI runs
 the same suite plus PSScriptAnalyzer (error severity fails) on `windows-latest` and
 `ubuntu-latest`. The skill that teaches an agent to search and maintain the store is at
 `plugin/skills/gitmemo/SKILL.md`.

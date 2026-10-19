@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-10-19
+
+### Fixed
+
+- 0.2.1 wrote the store's `.gitignore` whenever the file was missing, but "missing" also
+  means "pruned by sparse checkout". A store that already carried its own `.gitignore` had
+  it replaced by the hook's one-line version and committed on the next capture. The file is
+  created only when git has never seen it, and the hook log is untracked only when the rules
+  on disk cover it. Test 15 pins the behaviour down.
+
 ## [0.2.1] - 2026-10-19
 
 ### Fixed
