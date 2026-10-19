@@ -40,7 +40,7 @@ block a session.
 | `plugin/hooks/lib.ps1` | Store root, slug, redaction, index, commit/push |
 | `plugin/hooks/session-start.ps1` | Clone/pull/print memory |
 | `plugin/hooks/session-end.ps1` | Capture/redact/commit/push |
-| `plugin/hooks/search.ps1` | Search notes and manifests; `-Sessions` for transcripts |
+| `plugin/hooks/search.ps1` | Search notes, index and manifests; `-Sessions` adds the transcripts |
 | `plugin/hooks/install.ps1` | Manual path: hooks registration, legacy retirement, attributes, sparse, `-InstallCli` |
 | `plugin/bin/git-memo*` | `git memo search`, `notes`, `status` |
 | `plugin/skills/gitmemo/SKILL.md` | Routing skill for searching and writing memory |
@@ -59,8 +59,9 @@ the folder name is used.
                              /manifest.jsonl   one JSON row per captured session
                              /index.md         regenerated from the manifest
                              /sessions/<yyyy-MM-dd-HHmmss>-<sid8>.jsonl
-<GITMEMO_HOME>/hooks/hook.log                  best-effort diagnostics
+<GITMEMO_HOME>/hooks/hook.log                  best-effort diagnostics, ignored by git
 <GITMEMO_HOME>/.gitattributes                  `* -text`
+<GITMEMO_HOME>/.gitignore                      `hooks/hook.log`
 ```
 
 A manifest row carries `captured`, `session`, `file`, `bytes`, `messages`, `sha256`,
@@ -97,8 +98,9 @@ transcript and compares the committed blob's size and sha256 with the manifest r
 ## Low-disk (sparse) mode
 
 Sparse checkout is the default. The working tree holds notes, index, manifest and the
-hook log; transcripts stay in the object database and on the remote. Local disk stays
-flat no matter how many sessions accrue; only `.git` grows.
+hook log, plus the store's `.gitattributes` and `.gitignore`; transcripts stay in the
+object database and on the remote. Local disk stays flat no matter how many sessions
+accrue; only `.git` grows.
 
 Measured on Windows with git 2.49, three synthetic sessions of 1.87 MB each (5.61 MB raw):
 
@@ -117,16 +119,18 @@ Low-disk mode is self-healing. Sparse config lives in `.git/config`, which is no
 and an existing store may predate sparse mode entirely, so `session-start.ps1` and
 `session-end.ps1` each call the shared `Initialize-Store` helper on every run; it enables
 sparse mode when `core.sparseCheckout` is missing and re-applies it when the pattern list is
-stale. That helper also writes the store's
-`.gitattributes`, so both the attributes and sparse mode arrive together. The pattern set
-is `/README.md`, `/.gitattributes`, `/hooks/`, `/projects/*/notes.md`,
-`/projects/*/index.md`, `/projects/*/manifest.jsonl`. `install.ps1` calls the same helper,
+stale. That helper also writes the store's `.gitattributes` and `.gitignore`, so both files
+and sparse mode arrive together. The pattern set is `/README.md`, `/.gitattributes`,
+`/.gitignore`, `/hooks/`, `/projects/*/notes.md`, `/projects/*/index.md`,
+`/projects/*/manifest.jsonl`. `install.ps1` calls the same helper,
 but no installer step is required: an existing or hand-made store switches on its next hook
 run. `install.ps1 -Full` skips the install-time sparse step only; the next hook run
 re-applies sparse mode. A failure to enable sparse mode is logged and the hook continues.
 
 Searching in sparse mode uses `git grep HEAD`, which reads committed blobs and writes
-nothing. It must never check transcripts back out.
+nothing. It must never check transcripts back out. `-Sessions` adds those transcript hits to
+the text scope instead of replacing it, so one run answers a question that lives in
+`notes.md` and a question that lives only in a transcript.
 
 ## Redaction
 
@@ -192,6 +196,12 @@ These cost time, in rough order:
 - A plugin install adds nothing to `PATH`, and git does not resolve a `.cmd`-only shim on
   Windows. The shim has to be the extensionless `#!/bin/sh` launcher, or a wrapper that
   forwards to `git-memo.ps1`.
+- The hook log is local diagnostics, not store content. A store written before
+  `.gitignore` existed can have it committed; the next hook run writes the ignore file and
+  untracks the log.
+- `-Sessions` used to replace the search scope in sparse mode, so a query answered in
+  `notes.md` came back empty whenever the caller also asked for transcripts. It adds the
+  transcript hits now; the scope bug is covered by a test.
 
 ## Open items
 
@@ -207,8 +217,8 @@ These cost time, in rough order:
 
 ## Tests
 
-`tests/run-tests.ps1` runs twelve checks without Pester, Pester modules or the network, all
-against temporary stores:
+`tests/run-tests.ps1` runs fourteen checks without Pester, Pester modules or the network,
+all against temporary stores:
 
 1. Every `.ps1` parses.
 2. Redaction replaces secrets but leaves base64, a bare `AKIA` prefix and normal paths alone.
@@ -226,3 +236,9 @@ against temporary stores:
     inside the sparse pattern set.
 12. `install.ps1 -InstallCli` writes a shim that `git memo` resolves, and a missing store
     with no `GITMEMO_REMOTE` leaves SessionStart silent but logged.
+13. `-Sessions` keeps the text scope: one run returns the `notes.md` hit and the transcript
+    hit that only exists in the objects.
+14. The hook log stays out of the history: `.gitignore` is written, a log committed earlier
+    is untracked, the local file survives and the pattern list carries both dotfiles.
+
+Both 13 and 14 fail when the fix is reverted, which is how they were checked.

@@ -54,27 +54,14 @@ if (-not (Test-Path -LiteralPath $root)) { Write-Output "no such project: $Proje
 # object database, so read them from there instead of checking 12 MB back out. A plain
 # `git grep` reads committed blobs and writes nothing.
 $sparse = ((& git -C $store config --get core.sparseCheckout 2>$null) -eq 'true')
-if ($Sessions -and $sparse) {
-    $spec = if ($Project) { "projects/$Project/sessions/*.jsonl" } else { 'projects/*/sessions/*.jsonl' }
-    $raw = & git -C $store grep --no-color -n -I -m 6 -e $Query HEAD -- $spec 2>&1
-    if ($LASTEXITCODE -gt 1) { Write-Output "search failed: $raw"; exit 1 }
-    if (-not $raw) { Write-Output "no matches for '$Query'"; exit 0 }
-    Write-Output '(from git objects, nothing written to disk)'
-    $shown = @($raw | Select-Object -First $Max)
-    foreach ($hit in $shown) {
-        $line = "$hit" -replace '^HEAD:', ''
-        if ($line.Length -gt 300) { $line = $line.Substring(0, 300) + ' ...' }
-        Write-Output $line
-    }
-    if (@($raw).Count -gt $shown.Count) { Write-Output "... ($(@($raw).Count - $shown.Count) more lines, raise -Max)" }
-    exit 0
-}
 
-$files = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
-    if ($Sessions) { $_.Extension -eq '.jsonl' -or $_.Name -eq 'notes.md' }
-    else { $_.Name -in @('notes.md', 'index.md', 'manifest.jsonl') }
-}
-if (-not $files) { Write-Output "no matches for '$Query'"; exit 0 }
+# -Sessions adds the transcripts to the text scope instead of replacing it: a query that
+# is answered in notes.md has to be found in the same run that also wants transcripts.
+$files = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+    if ($_.Name -in @('notes.md', 'index.md', 'manifest.jsonl')) { $true }
+    elseif ($Sessions -and $_.Extension -eq '.jsonl') { $true }
+    else { $false }
+})
 
 $hits = @()
 foreach ($file in $files) {
@@ -91,8 +78,26 @@ foreach ($file in $files) {
     }
 }
 
-if (-not $hits) { Write-Output "no matches for '$Query'"; exit 0 }
-$shown = @($hits | Select-Object -First $Max)
-$shown | ForEach-Object { Write-Output $_ }
-if ($hits.Count -gt $shown.Count) { Write-Output "... ($($hits.Count - $shown.Count) more lines, raise -Max)" }
+$sessionHits = @()
+if ($Sessions -and $sparse) {
+    $spec = if ($Project) { "projects/$Project/sessions/*.jsonl" } else { 'projects/*/sessions/*.jsonl' }
+    $raw = & git -C $store grep --no-color -n -I -m 6 -e $Query HEAD -- $spec 2>&1
+    if ($LASTEXITCODE -gt 1) { Write-Output "search failed: $raw"; exit 1 }
+    foreach ($hit in @($raw)) {
+        $line = "$hit" -replace '^HEAD:', ''
+        if ($line.Length -gt 300) { $line = $line.Substring(0, 300) + ' ...' }
+        $sessionHits += $line
+    }
+}
+
+$total = $hits.Count + $sessionHits.Count
+if ($total -eq 0) { Write-Output "no matches for '$Query'"; exit 0 }
+
+$shown = 0
+foreach ($hit in $hits) { if ($shown -ge $Max) { break }; Write-Output $hit; $shown++ }
+if ($sessionHits.Count -gt 0) {
+    Write-Output '(transcripts read from git objects, nothing written to disk)'
+    foreach ($hit in $sessionHits) { if ($shown -ge $Max) { break }; Write-Output $hit; $shown++ }
+}
+if ($total -gt $shown) { Write-Output "... ($($total - $shown) more lines, raise -Max)" }
 exit 0

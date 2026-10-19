@@ -16,7 +16,7 @@ function Get-StoreRemote { return $script:StoreRemote }
 # Low-disk mode keeps the working tree flat: notes, index and manifest are checked out,
 # transcripts stay in the object database and on the remote.
 function Get-SparsePatterns {
-    return @('/README.md', '/.gitattributes', '/hooks/', '/projects/*/notes.md', '/projects/*/index.md', '/projects/*/manifest.jsonl')
+    return @('/README.md', '/.gitattributes', '/.gitignore', '/hooks/', '/projects/*/notes.md', '/projects/*/index.md', '/projects/*/manifest.jsonl')
 }
 
 # Byte-faithful storage: without this, git normalises line endings on `git add`, so the
@@ -33,6 +33,22 @@ function Initialize-StoreAttributes {
         Write-HookLog $Source "could not write .gitattributes: $($_.Exception.Message)"
         return $false
     }
+}
+
+# The hook log is a local debugging trail, not store content, so it stays out of git.
+# Existing stores may have it committed already: untrack it while writing the ignore file.
+function Initialize-StoreIgnore {
+    param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
+    $path = Join-Path $Store '.gitignore'
+    if (Test-Path -LiteralPath $path) { return $false }
+    try {
+        Set-Content -LiteralPath $path -Value "hooks/hook.log`n" -NoNewline -Encoding utf8
+    } catch {
+        Write-HookLog $Source "could not write .gitignore: $($_.Exception.Message)"
+        return $false
+    }
+    & git -C $Store rm --cached --ignore-unmatch -q 'hooks/hook.log' 2>&1 | Out-Null
+    return $true
 }
 
 function Enable-StoreSparse {
@@ -56,14 +72,15 @@ function Initialize-StoreSparse {
     return (Enable-StoreSparse -Store $Store -Source $Source)
 }
 
-# Everything a hook needs before touching the store: byte-faithful attributes and
-# low-disk mode. Safe to call on every run.
+# Everything a hook needs before touching the store: byte-faithful attributes, the local
+# ignore file and low-disk mode. Safe to call on every run.
 function Initialize-Store {
     param([string]$Store = $script:StoreRoot, [string]$Source = 'store')
     if (-not (Test-Path -LiteralPath (Join-Path $Store '.git'))) { return $false }
     $attributesCreated = Initialize-StoreAttributes -Store $Store -Source $Source
-    # A new .gitattributes needs the current pattern list, which carries it.
-    if ($attributesCreated) { return (Enable-StoreSparse -Store $Store -Source $Source) }
+    $ignoreCreated = Initialize-StoreIgnore -Store $Store -Source $Source
+    # A new .gitattributes or .gitignore needs the current pattern list, which carries both.
+    if ($attributesCreated -or $ignoreCreated) { return (Enable-StoreSparse -Store $Store -Source $Source) }
     if ((& git -C $Store config --get core.sparseCheckout 2>$null) -ne 'true') {
         return (Enable-StoreSparse -Store $Store -Source $Source)
     }

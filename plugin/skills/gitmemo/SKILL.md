@@ -17,7 +17,7 @@ or before asking a question the store may already answer.
 # Primary path. Droid expands ${DROID_PLUGIN_ROOT} when this skill loads, and a plugin
 # install never adds its bin directory to PATH, so this form always works.
 pwsh -NoProfile -File "${DROID_PLUGIN_ROOT}/hooks/search.ps1" -Query "why was the parser dropped"
-pwsh -NoProfile -File "${DROID_PLUGIN_ROOT}/hooks/search.ps1" -Query "rc.exe" -Project trafficdesk -Sessions
+pwsh -NoProfile -File "${DROID_PLUGIN_ROOT}/hooks/search.ps1" -Query "backoff" -Project demo -Sessions
 pwsh -NoProfile -File "${DROID_PLUGIN_ROOT}/hooks/search.ps1" -List
 
 # Short form, only in a shell where `git-memo` is on PATH: install.ps1 -InstallCli writes
@@ -26,9 +26,9 @@ git memo search "why was the parser dropped"
 git memo status
 ```
 
-Default scope is `notes.md`, `index.md` and `manifest.jsonl`. `-Sessions` searches the
-raw transcripts. In sparse mode those transcripts are read from git objects, so the
-search writes nothing to disk.
+Default scope is `notes.md`, `index.md` and `manifest.jsonl`. `-Sessions` adds the raw
+transcripts to that scope, so one run answers both. In sparse mode those transcripts are
+read from git objects, so the search writes nothing to disk.
 
 ## Write notes before you finish
 
@@ -71,13 +71,14 @@ the manifest. Redaction is case-sensitive on purpose.
 
 ## Sparse mode
 
-Low-disk mode is the default. The working tree contains notes, index, manifest, hooks and
-`.gitattributes`; transcripts live in the object database and on the remote, so local disk
-stays flat no matter how many sessions accrue. Only `.git` grows. Searching sessions reads
-committed blobs with `git grep HEAD`.
+Low-disk mode is the default. The working tree contains notes, index, manifest, hooks,
+`.gitattributes` and `.gitignore`; transcripts live in the object database and on the
+remote, so local disk stays flat no matter how many sessions accrue. Only `.git` grows.
+Searching sessions reads committed blobs with `git grep HEAD`.
 
 The store's `.gitattributes` is `* -text`: git must never normalise a transcript, or the
-committed blob stops matching the `bytes` and `sha256` in its manifest row.
+committed blob stops matching the `bytes` and `sha256` in its manifest row. The store's
+`.gitignore` covers `hooks/hook.log`, which is local diagnostics and never store content.
 
 ## Traps, one line each
 
@@ -89,6 +90,7 @@ committed blob stops matching the `bytes` and `sha256` in its manifest row.
 - Every hook failure path must log to `<GITMEMO_HOME>/hooks/hook.log` and exit 0, including invalid JSON on stdin.
 - `git memo --help` never reaches the CLI: git intercepts it as a man page lookup. Use `git memo help`.
 - A transcript must be committed byte-for-byte. The store's `.gitattributes` (`* -text`) and the sparse pattern list both have to keep it that way.
+- `-Sessions` must add the transcripts to the text scope, never replace it, or a question answered in `notes.md` goes missing whenever transcripts are in scope too.
 
 ## Verifying a change to the store itself
 

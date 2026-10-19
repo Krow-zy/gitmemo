@@ -162,7 +162,7 @@ live in the CLI only: `pwsh -NoProfile -File ./plugin/bin/git-memo.ps1 notes`.
 | Command | What it does |
 |---|---|
 | `git memo search <text>` | Searches `notes.md`, `index.md` and `manifest.jsonl` |
-| `git memo search <text> --sessions` | Searches the raw transcripts; in low-disk mode from the git objects |
+| `git memo search <text> --sessions` | Adds the raw transcripts to the search; in low-disk mode from the git objects |
 | `git memo search <text> --project <name>` | Limits the search to one project slug |
 | `git memo search <text> --max <n>` | Caps the number of result lines (default 40) |
 | `git memo notes` | Prints the current project's `notes.md` and its path |
@@ -180,7 +180,7 @@ live in the CLI only: `pwsh -NoProfile -File ./plugin/bin/git-memo.ps1 notes`.
 | `-NoPush` (`session-end.ps1`) | off | Commit locally and skip the push, for offline or air-gapped runs |
 | `-Force` (`session-end.ps1`) | off | Re-capture a session id that is already in the manifest |
 | Redaction patterns | 9 | Credential shapes replaced with `[REDACTED]` before the transcript is stored |
-| Low-disk patterns | 6 paths | `/README.md`, `/.gitattributes`, `/hooks/`, `/projects/*/notes.md`, `/projects/*/index.md`, `/projects/*/manifest.jsonl` |
+| Low-disk patterns | 7 paths | `/README.md`, `/.gitattributes`, `/.gitignore`, `/hooks/`, `/projects/*/notes.md`, `/projects/*/index.md`, `/projects/*/manifest.jsonl` |
 | Hook timeouts | `25` s start, `90` s end | Set in `plugin/hooks/hooks.json`; a slower hook is killed by Droid |
 
 Raising the capture cap: pass `-MaxMegabytes <n>` when running `session-end.ps1` by hand.
@@ -204,6 +204,7 @@ store switches to low-disk mode without an installer step.
 | `projects/<slug>/index.md` | Regenerated from the manifest by `session-end.ps1` |
 | `projects/<slug>/sessions/*.jsonl` | Redacted transcript, stored in git |
 | `.gitattributes` in the store | `* -text`, written on store init so a transcript commits byte-for-byte |
+| `.gitignore` in the store | `hooks/hook.log`, so local diagnostics never enter a capture |
 | `hooks/hook.log` | Every skipped or failed hook path, with the reason |
 
 The slug is the repository name from `git remote get-url origin`, lowercased. Dedup is by
@@ -237,7 +238,7 @@ git clone https://github.com/Krow-zy/gitmemo
 pwsh -NoProfile -File ./tests/run-tests.ps1
 ```
 
-Twelve tests run against temporary stores with no network and no real user data. CI runs
+Fourteen tests run against temporary stores with no network and no real user data. CI runs
 the same suite plus PSScriptAnalyzer (error severity fails) on `windows-latest` and
 `ubuntu-latest`. The skill that teaches an agent to search and maintain the store is at
 `plugin/skills/gitmemo/SKILL.md`.
@@ -255,9 +256,8 @@ Tagging `v*` runs the release workflow, which reruns the tests and attaches
   is private for that reason.
 - Nothing prunes old sessions yet. There is no retention policy.
 - Search is case-sensitive substring matching, not semantic search.
-- `--sessions` replaces the default scope instead of extending it: in low-disk mode it
-  searches the transcripts only, so a hit that lives in `notes.md` needs a second run
-  without the flag.
+- `--sessions` adds the transcripts to the text scope. A transcript hit is a raw JSONL
+  line, trimmed at 300 characters, not a summary.
 - Filenames use the first 8 characters of the session id; the manifest keeps the full id.
 - The plugin does not capture attachments, images or binary payloads.
 

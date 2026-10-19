@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-19
+
+### Fixed
+
+- `-Sessions` replaced the search scope in low-disk mode instead of extending it, so a
+  query answered in `notes.md` came back empty whenever transcripts were requested in the
+  same run. Transcript hits are now appended to the notes, index and manifest hits.
+- The hook log was tracked in the store, so every capture committed local diagnostics. The
+  store now gets a `.gitignore` covering `hooks/hook.log`, the file is untracked when it was
+  committed by an older version, and the sparse pattern list keeps both dotfiles checked out.
+
 ## [0.2.0] - 2026-10-19
 
 ### Changed

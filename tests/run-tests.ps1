@@ -543,6 +543,69 @@ Test-Case '12 install -InstallCli writes a working shim' {
     Assert-True ((Get-Content -LiteralPath $log -Raw) -match 'no store configured') 'no-remote start was not explained in the log'
 }
 
+# --- 13 ----------------------------------------------------------------------
+Test-Case '13 -Sessions adds the transcripts to the text scope' {
+    $store = Join-Path $tempRoot 'store-13'
+    New-TestStore $store
+    Set-SparsePatterns $store
+    $project = Join-Path $tempRoot 'project-13'
+    New-TestProject -Path $project
+    $projectDir = Join-Path $store (Join-Path 'projects' 'project-13')
+
+    $capture = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcriptPlain, '-SessionId', 'session-thirteen', '-NoPush')
+    Assert-True ($capture.ExitCode -eq 0) "capture failed: $($capture.Output)"
+    New-Item -ItemType Directory -Force -Path $projectDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $projectDir 'notes.md') -Value 'NOTES_ONLY_MARKER_9c1f' -Encoding utf8
+
+    # One run has to answer both questions: the hit in notes.md and the hit that only
+    # exists in the transcripts, which in low-disk mode live in the object database.
+    $search = Invoke-Script -Script (Join-Path $hooks 'search.ps1') -Store $store `
+        -Arguments @('-Query', 'NOTES_ONLY_MARKER_9c1f', '-Sessions')
+    Assert-True ($search.ExitCode -eq 0) "search exit $($search.ExitCode): $($search.Output)"
+    Assert-True ($search.Output -match 'notes\.md') "the notes hit disappeared with -Sessions: $($search.Output)"
+
+    $transcripts = Invoke-Script -Script (Join-Path $hooks 'search.ps1') -Store $store `
+        -Arguments @('-Query', 'GITMEMO_TEST_TOKEN_7f3a', '-Sessions')
+    Assert-True ($transcripts.ExitCode -eq 0) "search exit $($transcripts.ExitCode)"
+    Assert-True ($transcripts.Output -match 'from git objects') "the transcript hit is missing with -Sessions: $($transcripts.Output)"
+
+    $plain = Invoke-Script -Script (Join-Path $hooks 'search.ps1') -Store $store `
+        -Arguments @('-Query', 'NOTES_ONLY_MARKER_9c1f')
+    Assert-True ($plain.Output -match 'notes\.md') "the notes hit is missing without -Sessions: $($plain.Output)"
+    Assert-True ($plain.Output -notmatch 'from git objects') 'the default scope read the objects'
+}
+
+# --- 14 ----------------------------------------------------------------------
+Test-Case '14 the hook log stays out of the store history' {
+    $store = Join-Path $tempRoot 'store-14'
+    New-TestStore $store
+    $project = Join-Path $tempRoot 'project-14'
+    New-TestProject -Path $project
+
+    # A store written before .gitignore existed can already have the log committed.
+    New-Item -ItemType Directory -Force -Path (Join-Path $store 'hooks') | Out-Null
+    Set-Content -LiteralPath (Join-Path $store 'hooks/hook.log') -Value 'old log line' -Encoding utf8
+    & git -C $store add -A 2>&1 | Out-Null
+    & git -C $store commit -q -m 'log' 2>&1 | Out-Null
+    Assert-True (@(& git -C $store ls-files 'hooks/hook.log').Count -eq 1) 'the test store did not commit the log'
+
+    $run = Invoke-Script -Script (Join-Path $hooks 'session-end.ps1') -Store $store `
+        -Arguments @('-Cwd', $project, '-TranscriptPath', $transcriptPlain, '-SessionId', 'session-fourteen', '-NoPush')
+    Assert-True ($run.ExitCode -eq 0) "capture exit $($run.ExitCode): $($run.Output)"
+
+    $ignore = Join-Path $store '.gitignore'
+    Assert-True (Test-Path -LiteralPath $ignore) '.gitignore was not written'
+    Assert-True ((Get-Content -LiteralPath $ignore -Raw) -match 'hooks/hook\.log') '.gitignore does not cover the hook log'
+    Assert-True (@(& git -C $store ls-files 'hooks/hook.log').Count -eq 0) 'the hook log is still tracked'
+    Assert-True (@(& git -C $store ls-tree -r --name-only HEAD -- 'hooks/hook.log').Count -eq 0) 'the hook log is still committed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $store 'hooks/hook.log')) 'the local log was deleted instead of untracked'
+
+    $patterns = Get-Content -LiteralPath (Join-Path $store '.git/info/sparse-checkout') -Raw
+    Assert-True ($patterns.Contains('/.gitignore')) 'the sparse pattern list does not carry .gitignore'
+    Assert-True ($patterns.Contains('/.gitattributes')) 'the sparse pattern list does not carry .gitattributes'
+}
+
 # --- summary -----------------------------------------------------------------
 Write-Output ''
 Write-Output ('{0} passed, {1} failed' -f $script:passes, $script:failures)

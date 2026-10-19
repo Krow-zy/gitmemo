@@ -8,7 +8,7 @@ hooks/hooks.json instead.
     pwsh -File install.ps1 -Remote <owner/repo>
 
 There is no default remote. It clones the store when missing, fixes the credential helper
-for the private remote, writes the store's byte-faithful .gitattributes, switches on sparse
+for the private remote, writes the store's byte-faithful .gitattributes and .gitignore, switches on sparse
 checkout (low-disk mode, the default), and registers SessionStart and SessionEnd in
 ~/.factory/hooks.json. It also removes legacy hooks whose command mentions `agent-memory`,
 so a session is never captured twice. Pass -Full to skip the sparse step.
@@ -86,8 +86,10 @@ if ($storeIsRepo -and -not $SkipCredentials) {
 }
 
 # .gitattributes is written for every store: git must never normalise a transcript, or
-# the committed blob stops matching the manifest's bytes/sha256.
+# the committed blob stops matching the manifest's bytes/sha256. .gitignore keeps the
+# local hook log out of the store history.
 if ($storeIsRepo) { [void](Initialize-StoreAttributes -Store $StoreRoot -Source 'install') }
+if ($storeIsRepo) { [void](Initialize-StoreIgnore -Store $StoreRoot -Source 'install') }
 
 # Storage mode: transcripts stay in git and on GitHub, the working tree keeps only the
 # files a session needs, so local disk stays flat no matter how many sessions pile up.
