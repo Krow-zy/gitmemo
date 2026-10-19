@@ -66,10 +66,14 @@ pwsh -NoProfile -File ./plugin/hooks/install.ps1 -Remote your-name/gitmemo-store
 
 The installer is idempotent, removes old `agent-memory` hook registrations, configures the
 credential helper for the private remote, writes the store's `.gitattributes`, and enables
-sparse checkout. `-InstallCli` also writes a `git-memo` shim to a per-user directory on
-`PATH` and prints the path. `-Full` skips the sparse step, but the hooks re-apply sparse
+sparse checkout. `-InstallCli` also writes a `git-memo` shim to the first per-user
+directory on `PATH` (or `~/.local/bin` when there is none) and prints the path. `-Full`
+skips the sparse step, but the hooks re-apply sparse
 mode on their next run: they own low-disk mode, so an existing store reaches it without
 the installer.
+
+Pick up a later version with `droid plugin update gitmemo`, or reinstall as above. The
+plugin installs nothing else: no global config, no shell profile changes.
 
 ## Enable the plugin
 
